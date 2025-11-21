@@ -21,16 +21,21 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.white,
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.memory, size: 80, color: Colors.blue),
-            const SizedBox(height: 20),
-            const Text(
-              'AI Memory Prosthetic',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            Image.asset(
+              'assets/images/splash_logo.jpg',
+              width: 200,
+              height: 200,
             ),
+            // const SizedBox(height: 20),
+            // const Text(
+            //   'AI Memory Prosthetic',
+            //   style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            //),
             const SizedBox(height: 20),
             const CircularProgressIndicator(),
           ],
