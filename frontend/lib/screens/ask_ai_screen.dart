@@ -34,7 +34,7 @@ class _AskAIScreenState extends State<AskAIScreen> {
       _ChatMessage(
         sender: 'ai',
         text:
-            "Hello. I am your memory assistant. Ask me anything about your past...",
+            "Hello, I am Vyra. Feel free to ask anything, even about your past memories...",
       ),
     );
   }
@@ -247,7 +247,7 @@ class _AskAIScreenState extends State<AskAIScreen> {
         children: [
           // Sender Name
           Text(
-            isUser ? "You" : "Memory AI",
+            isUser ? "You" : "Vyra",
             style: TextStyle(
               fontWeight: FontWeight.bold,
               fontSize: 12,

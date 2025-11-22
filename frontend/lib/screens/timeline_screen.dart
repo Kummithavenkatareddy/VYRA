@@ -99,7 +99,7 @@ class _TimelineScreenState extends State<TimelineScreen> {
                       Column(
                         children: [
                           const Text(
-                            'Timeline',
+                            'Life Replay',
                             style: TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.w500,
