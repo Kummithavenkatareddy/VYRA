@@ -9,101 +9,132 @@ class TextMemoryScreen extends StatefulWidget {
 }
 
 class _TextMemoryScreenState extends State<TextMemoryScreen> {
-  final _textController = TextEditingController();
+  // 1. Controller handles the text input
+  final TextEditingController _textController = TextEditingController();
   final ApiService _apiService = ApiService();
+
   bool _isSaving = false;
 
+  // 2. Tone Selection State
+  String _selectedTone = "neutral";
+  final List<String> _tones = [
+    "neutral",
+    "happy",
+    "sad",
+    "excited",
+    "anxious",
+    "confident",
+  ];
+
+  @override
+  void dispose() {
+    _textController.dispose(); // Always clean up controllers
+    super.dispose();
+  }
+
   Future<void> _saveMemory() async {
-    if (_textController.text.trim().isEmpty) return;
-
-    setState(() {
-      _isSaving = true;
-    });
-
-    // Call API
-    await _apiService.createTextMemory(_textController.text);
-
-    if (mounted) {
-      setState(() {
-        _isSaving = false;
-      });
+    if (_textController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Memory Saved!')),
+        const SnackBar(content: Text('Please write something first!')),
       );
-      Navigator.pop(context);
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      // 3. Call the API with Text AND Tone
+      // Endpoint: /memory/text
+      await _apiService.addTextMemory(_textController.text, _selectedTone);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Memory Saved Successfully!')),
+        );
+        Navigator.pop(context, true); // Return "true" to refresh the timeline
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: true, // Key for text fields
       body: Stack(
         children: [
-          // 1. Background Gradient
+          // Background
           Positioned.fill(
             child: Container(
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
+                  colors: [Color(0xFFF5F7FA), Color(0xFFE4E8F0)],
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    Color(0xFFF5F7FA), // Light blue-grey top
-                    Color(0xFFE4E8F0), // Slightly darker bottom
-                  ],
                 ),
               ),
             ),
           ),
 
-          // 2. Content
           SafeArea(
             child: Column(
               children: [
                 // Header
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16.0,
+                    vertical: 12.0,
+                  ),
                   child: Row(
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.arrow_back, color: Colors.black54, size: 28),
+                        icon: const Icon(
+                          Icons.arrow_back,
+                          color: Colors.black54,
+                        ),
                         onPressed: () => Navigator.pop(context),
                       ),
-                      Expanded(
+                      const Expanded(
                         child: Center(
                           child: Text(
-                            'Text Memory Entry',
+                            'New Text Memory',
                             style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w400,
-                              color: Colors.grey.shade800,
-                              letterSpacing: 0.5,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 48), // Balance back button
+                      const SizedBox(width: 48),
                     ],
                   ),
                 ),
 
-                const SizedBox(height: 20),
-
-                // Main Card with Input
                 Expanded(
                   child: SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                    padding: const EdgeInsets.all(20),
                     child: Column(
                       children: [
+                        // Input Card
                         Container(
-                          height: 300, // Fixed height for the card look
+                          constraints: const BoxConstraints(minHeight: 200),
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(20),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.05),
-                                blurRadius: 15,
-                                offset: const Offset(0, 5),
+                                color: Colors.black12,
+                                blurRadius: 10,
+                                offset: Offset(0, 4),
                               ),
                             ],
                           ),
@@ -113,18 +144,15 @@ class _TextMemoryScreenState extends State<TextMemoryScreen> {
                               foregroundPainter: LinedPaperPainter(),
                               child: TextField(
                                 controller: _textController,
-                                maxLines: null, // Allow unlimited lines
-                                // expand: true, // Fill the container
+                                maxLines: null,
                                 style: const TextStyle(
                                   fontSize: 18,
-                                  height: 1.55, // Match line height of painter
-                                  color: Colors.black87,
+                                  height: 1.55,
                                 ),
                                 decoration: InputDecoration(
-                                  hintText: 'Start typing your memory here...',
+                                  hintText: 'Write your memory here...',
                                   hintStyle: TextStyle(
                                     color: Colors.grey.shade400,
-                                    fontSize: 18,
                                   ),
                                   border: InputBorder.none,
                                   contentPadding: const EdgeInsets.all(24),
@@ -134,7 +162,35 @@ class _TextMemoryScreenState extends State<TextMemoryScreen> {
                           ),
                         ),
 
-                        const SizedBox(height: 40),
+                        const SizedBox(height: 20),
+
+                        // Tone Selector (Horizontal Scroll)
+                        SizedBox(
+                          height: 50,
+                          child: ListView(
+                            scrollDirection: Axis.horizontal,
+                            children: _tones.map((tone) {
+                              final isSelected = _selectedTone == tone;
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 8.0),
+                                child: ChoiceChip(
+                                  label: Text(tone.toUpperCase()),
+                                  selected: isSelected,
+                                  onSelected: (selected) =>
+                                      setState(() => _selectedTone = tone),
+                                  selectedColor: const Color(0xFF89C4F4),
+                                  labelStyle: TextStyle(
+                                    color: isSelected
+                                        ? Colors.white
+                                        : Colors.black54,
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+
+                        const SizedBox(height: 30),
 
                         // Save Button
                         SizedBox(
@@ -143,29 +199,20 @@ class _TextMemoryScreenState extends State<TextMemoryScreen> {
                           child: ElevatedButton(
                             onPressed: _isSaving ? null : _saveMemory,
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF89C4F4), // Soft Blue
-                              foregroundColor: Colors.white,
-                              elevation: 2,
-                              shadowColor: const Color(0xFF89C4F4).withOpacity(0.5),
+                              backgroundColor: const Color(0xFF89C4F4),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(30),
                               ),
                             ),
                             child: _isSaving
-                                ? const SizedBox(
-                                    width: 24,
-                                    height: 24,
-                                    child: CircularProgressIndicator(
-                                      color: Colors.white,
-                                      strokeWidth: 2,
-                                    ),
+                                ? const CircularProgressIndicator(
+                                    color: Colors.white,
                                   )
                                 : const Text(
-                                    'Save',
+                                    'Save Memory',
                                     style: TextStyle(
                                       fontSize: 18,
-                                      fontWeight: FontWeight.w500,
-                                      letterSpacing: 0.5,
+                                      color: Colors.white,
                                     ),
                                   ),
                           ),
@@ -183,19 +230,20 @@ class _TextMemoryScreenState extends State<TextMemoryScreen> {
   }
 }
 
+// Your custom painter logic
 class LinedPaperPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..color = Colors.grey.shade200
       ..strokeWidth = 1.0;
-
-    // Match the TextField height and padding
-    double lineHeight = 28.0; // Approx 18 * 1.55
+    double lineHeight = 28.0; // matches TextField height approx
     double paddingTop = 24.0;
-    
-    // Draw lines starting from where text begins
-    for (double y = paddingTop + lineHeight; y < size.height - paddingTop; y += lineHeight) {
+    for (
+      double y = paddingTop + lineHeight;
+      y < size.height - paddingTop;
+      y += lineHeight
+    ) {
       canvas.drawLine(Offset(24, y), Offset(size.width - 24, y), paint);
     }
   }

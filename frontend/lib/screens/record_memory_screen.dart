@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'dart:async';
-import '../services/api_service.dart'; // Assuming this exists from previous steps
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import '../services/api_service.dart';
 
 class RecordMemoryScreen extends StatefulWidget {
   const RecordMemoryScreen({super.key});
@@ -9,11 +9,18 @@ class RecordMemoryScreen extends StatefulWidget {
   State<RecordMemoryScreen> createState() => _RecordMemoryScreenState();
 }
 
-class _RecordMemoryScreenState extends State<RecordMemoryScreen> with SingleTickerProviderStateMixin {
-  bool _isRecording = false;
-  String _statusText = "Tap to Record";
+class _RecordMemoryScreenState extends State<RecordMemoryScreen>
+    with SingleTickerProviderStateMixin {
   final ApiService _apiService = ApiService();
-  
+  late stt.SpeechToText _speech;
+
+  // We use a Controller so the user can EDIT the text manually if STT makes a mistake
+  final TextEditingController _textController = TextEditingController();
+
+  bool _isListening = false;
+  bool _isSaving = false;
+  bool _speechAvailable = false;
+
   // Animation for the pulsing glow
   late AnimationController _animationController;
   late Animation<double> _scaleAnimation;
@@ -21,207 +28,255 @@ class _RecordMemoryScreenState extends State<RecordMemoryScreen> with SingleTick
   @override
   void initState() {
     super.initState();
+    _speech = stt.SpeechToText();
+    _initSpeech();
+
     _animationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
-    
+
     _scaleAnimation = Tween<double>(begin: 1.0, end: 1.2).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
     );
   }
 
+  void _initSpeech() async {
+    try {
+      _speechAvailable = await _speech.initialize(
+        onStatus: (status) => debugPrint('Status: $status'),
+        onError: (error) => debugPrint('Error: $error'),
+      );
+      setState(() {});
+    } catch (e) {
+      debugPrint("Speech init error: $e");
+    }
+  }
+
   @override
   void dispose() {
+    _speech.stop();
     _animationController.dispose();
+    _textController.dispose(); // Always dispose controllers to free memory
     super.dispose();
   }
 
+  // Toggle Microphone
   Future<void> _toggleRecording() async {
-    setState(() {
-      _isRecording = !_isRecording;
-      _statusText = _isRecording ? "Listening..." : "Tap to Record";
-    });
+    if (_isListening) {
+      _speech.stop();
+      setState(() => _isListening = false);
+    } else {
+      if (!_speechAvailable) {
+        await _speech.initialize();
+      }
+      setState(() => _isListening = true);
 
-    if (!_isRecording) {
-      // Stopped recording, simulate upload
-      setState(() {
-        _statusText = "Transcribing...";
-      });
-      
-      // Simulate processing delay
-      await Future.delayed(const Duration(seconds: 2));
-      
-      // Here you would call _apiService.uploadAudioMemory(path)
-      
-      if (mounted) {
-        setState(() {
-          _statusText = "Saved!";
-        });
-        await Future.delayed(const Duration(seconds: 1));
-        if (mounted) {
+      _speech.listen(
+        onResult: (val) {
           setState(() {
-            _statusText = "Tap to Record";
+            // Update the text field in real-time
+            _textController.text = val.recognizedWords;
+            // Move cursor to the end of text
+            _textController.selection = TextSelection.fromPosition(
+              TextPosition(offset: _textController.text.length),
+            );
           });
-        }
+        },
+      );
+    }
+  }
+
+  // Manual Save Action
+  Future<void> _saveMemory() async {
+    if (_textController.text.isEmpty) return;
+
+    setState(() => _isSaving = true);
+
+    try {
+      // Send the text from the controller (spoken OR typed)
+      await _apiService.recordMemory(_textController.text, "spoken");
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Memory Saved Successfully!')),
+        );
+        _textController.clear(); // Clear input after save
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Check if we have content to save
+    bool canSave = _textController.text.isNotEmpty && !_isSaving;
+
     return Scaffold(
+      // Prevent keyboard from covering the button
+      resizeToAvoidBottomInset: true,
       body: Stack(
         children: [
-          // 1. Background Gradient & Lines
+          // Background
           Positioned.fill(
             child: Container(
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
+                  colors: [Color(0xFFFFFBF5), Color(0xFFFFFFFF)],
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    Color(0xFFFFFBF5), // Warm white top
-                    Color(0xFFFFFFFF), // White bottom
-                  ],
                 ),
               ),
-              child: CustomPaint(
-                painter: FaintLinesPainter(),
-              ),
+              child: CustomPaint(painter: FaintLinesPainter()),
             ),
           ),
 
-          // 2. Content
           SafeArea(
             child: Column(
               children: [
                 // Header
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+                  padding: const EdgeInsets.all(16.0),
                   child: Row(
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.arrow_back, color: Colors.black87, size: 28),
+                        icon: const Icon(Icons.arrow_back),
                         onPressed: () => Navigator.pop(context),
                       ),
-                      Expanded(
+                      const Expanded(
                         child: Center(
                           child: Text(
                             'Record Memory',
                             style: TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.w400,
-                              color: Colors.grey.shade800,
-                              letterSpacing: 0.5,
                             ),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 48), // Balance the back button
+                      const SizedBox(width: 48),
                     ],
                   ),
                 ),
 
                 Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      // Mic Button Stack
-                      GestureDetector(
-                        onTap: _toggleRecording,
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            // Outer Glow Ring (Animated when recording, static subtle when not)
-                            AnimatedBuilder(
-                              animation: _scaleAnimation,
-                              builder: (context, child) {
-                                return Container(
-                                  width: 180,
-                                  height: 180,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: Colors.blue.withOpacity(_isRecording ? 0.3 : 0.1),
-                                      width: 2,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // 1. Editable Text Area
+                        TextField(
+                          controller: _textController,
+                          maxLines: null, // Grows with text
+                          textAlign: TextAlign.center,
+                          decoration: InputDecoration(
+                            hintText: _isListening
+                                ? "Listening..."
+                                : "Tap mic to record or type here...",
+                            border: InputBorder.none,
+                            hintStyle: TextStyle(color: Colors.grey.shade400),
+                          ),
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.black87,
+                          ),
+                        ),
+
+                        const SizedBox(height: 40),
+
+                        // 2. Mic Button
+                        GestureDetector(
+                          onTap: _toggleRecording,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              if (_isListening)
+                                AnimatedBuilder(
+                                  animation: _scaleAnimation,
+                                  builder: (context, child) => Container(
+                                    width: 150 * _scaleAnimation.value,
+                                    height: 150 * _scaleAnimation.value,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: Colors.blue.withOpacity(0.1),
                                     ),
-                                    color: Colors.blue.withOpacity(_isRecording ? 0.05 : 0.0),
-                                    boxShadow: _isRecording ? [
-                                      BoxShadow(
-                                        color: Colors.blue.withOpacity(0.2),
-                                        blurRadius: 20 * _scaleAnimation.value,
-                                        spreadRadius: 5,
-                                      )
-                                    ] : [],
                                   ),
-                                );
-                              },
-                            ),
-                            
-                            // Inner White Circle
-                            Container(
-                              width: 120,
-                              height: 120,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.white,
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.08),
-                                    blurRadius: 15,
-                                    offset: const Offset(0, 8),
-                                  ),
-                                ],
-                              ),
-                              child: Center(
+                                ),
+                              Container(
+                                width: 100,
+                                height: 100,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: _isListening
+                                      ? Colors.redAccent
+                                      : Colors.white,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.1),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
                                 child: Icon(
-                                  Icons.mic,
-                                  size: 48,
-                                  color: Colors.grey.shade700,
+                                  _isListening ? Icons.stop : Icons.mic,
+                                  color: _isListening
+                                      ? Colors.white
+                                      : Colors.grey.shade700,
+                                  size: 40,
                                 ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
 
-                      const SizedBox(height: 40),
+                        const SizedBox(height: 30),
 
-                      // Status Text
-                      Text(
-                        _statusText,
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w400,
-                          color: Colors.grey.shade500,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                      
-                      const SizedBox(height: 20),
-                      
-                      // Placeholder for waveform/transient status
-                      SizedBox(
-                        height: 40,
-                        child: _isRecording
-                            ? Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: List.generate(5, (index) {
-                                  return Container(
-                                    margin: const EdgeInsets.symmetric(horizontal: 3),
-                                    width: 4,
+                        // 3. Save Button (Visible only when there is text)
+                        AnimatedOpacity(
+                          opacity: canSave ? 1.0 : 0.0,
+                          duration: const Duration(milliseconds: 300),
+                          child: ElevatedButton.icon(
+                            onPressed: canSave ? _saveMemory : null,
+                            icon: _isSaving
+                                ? const SizedBox(
+                                    width: 20,
                                     height: 20,
-                                    decoration: BoxDecoration(
-                                      color: Colors.blue.withOpacity(0.4),
-                                      borderRadius: BorderRadius.circular(2),
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
                                     ),
-                                  );
-                                }),
-                              )
-                            : const SizedBox.shrink(),
-                      ),
-                    ],
+                                  )
+                                : const Icon(Icons.save_alt),
+                            label: Text(
+                              _isSaving ? "Saving..." : "Save Memory",
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.black87,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 32,
+                                vertical: 16,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(30),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -233,15 +288,14 @@ class _RecordMemoryScreenState extends State<RecordMemoryScreen> with SingleTick
   }
 }
 
+// (Keep your FaintLinesPainter class here)
 class FaintLinesPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.grey.withOpacity(0.05) // Very faint
+      ..color = Colors.grey.withOpacity(0.05)
       ..strokeWidth = 1.0;
-
-    double lineHeight = 40.0;
-    for (double y = 100; y < size.height; y += lineHeight) {
+    for (double y = 100; y < size.height; y += 40) {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
     }
   }

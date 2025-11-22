@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../services/api_service.dart';
+import '../models/api_models.dart'; // To access TimelineResponse
 
 class AskAIScreen extends StatefulWidget {
   const AskAIScreen({super.key});
@@ -8,33 +10,49 @@ class AskAIScreen extends StatefulWidget {
   State<AskAIScreen> createState() => _AskAIScreenState();
 }
 
+// Updated Message Model to include "Sources"
 class _ChatMessage {
   final String sender; // 'user' or 'ai'
   final String text;
+  final List<TimelineResponse>? sources; // The RAG memories found
 
-  _ChatMessage({required this.sender, required this.text});
+  _ChatMessage({required this.sender, required this.text, this.sources});
 }
 
 class _AskAIScreenState extends State<AskAIScreen> {
-  final _queryController = TextEditingController();
+  final TextEditingController _queryController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final ApiService _apiService = ApiService();
+
   final List<_ChatMessage> _messages = [];
   bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    // Add an initial greeting from the AI
-    _messages.add(_ChatMessage(
-      sender: 'ai',
-      text: "Hello. I am your memory assistant. Ask me anything about your past days...",
-    ));
+    _messages.add(
+      _ChatMessage(
+        sender: 'ai',
+        text:
+            "Hello. I am your memory assistant. Ask me anything about your past...",
+      ),
+    );
   }
 
-  void _askAI() async {
+  @override
+  void dispose() {
+    _queryController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _askAI() async {
+    // Shortcut: Guard clause for empty text
     if (_queryController.text.trim().isEmpty) return;
 
     final userText = _queryController.text.trim();
+
+    // 1. Add User Message immediately
     setState(() {
       _messages.add(_ChatMessage(sender: 'user', text: userText));
       _isLoading = true;
@@ -42,17 +60,38 @@ class _AskAIScreenState extends State<AskAIScreen> {
     });
     _scrollToBottom();
 
-    // Simulate API delay
-    await Future.delayed(const Duration(seconds: 2));
+    try {
+      // 2. Call Real API endpoint (/ask)
+      final response = await _apiService.askAI(userText);
 
-    setState(() {
-      _isLoading = false;
-      _messages.add(_ChatMessage(
-        sender: 'ai',
-        text: "Based on your memories, it seems you were quite happy about that event. You mentioned feeling proud and excited.",
-      ));
-    });
-    _scrollToBottom();
+      if (!mounted) return;
+
+      // 3. Add AI Response with Sources
+      setState(() {
+        _messages.add(
+          _ChatMessage(
+            sender: 'ai',
+            text: response.answer,
+            sources: response.usedMemories, // Pass the RAG sources
+          ),
+        );
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _messages.add(
+          _ChatMessage(
+            sender: 'ai',
+            text: "I'm having trouble accessing your memories right now. ($e)",
+          ),
+        );
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _scrollToBottom();
+      }
+    }
   }
 
   void _scrollToBottom() {
@@ -70,100 +109,69 @@ class _AskAIScreenState extends State<AskAIScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // Resize to avoid bottom inset when keyboard opens
       resizeToAvoidBottomInset: true,
       body: Stack(
         children: [
-          // 1. Background with diary lines
-          Positioned.fill(
-            child: CustomPaint(
-              painter: DiaryPagePainter(),
-            ),
-          ),
-          
-          // 2. Content
+          // Background
+          Positioned.fill(child: CustomPaint(painter: DiaryPagePainter())),
+
           SafeArea(
             child: Column(
               children: [
-                // Header: Back Button & Date
+                // Header
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16.0,
+                    vertical: 12.0,
+                  ),
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.arrow_back, color: Colors.black54),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                      Text(
-                        DateFormat('MMMM d, yyyy').format(DateTime.now()),
-                        style: const TextStyle(
-                          fontFamily: 'Serif',
-                          fontStyle: FontStyle.italic,
-                          fontSize: 16,
+                        icon: const Icon(
+                          Icons.arrow_back,
                           color: Colors.black54,
                         ),
+                        onPressed: () => Navigator.pop(context),
                       ),
+                      const Expanded(
+                        child: Center(
+                          child: Text(
+                            "Ask Your Memory",
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontFamily: 'Serif',
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 48),
                     ],
                   ),
                 ),
 
-                // Chat List
+                // Chat Area
                 Expanded(
                   child: ListView.builder(
                     controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24.0,
+                      vertical: 10,
+                    ),
                     itemCount: _messages.length + (_isLoading ? 1 : 0),
                     itemBuilder: (context, index) {
                       if (index == _messages.length) {
-                        // Loading indicator
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 16.0),
-                          child: Row(
-                            children: const [
-                              Text(
-                                "AI is writing...",
-                                style: TextStyle(
-                                  fontFamily: 'Serif',
-                                  fontStyle: FontStyle.italic,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16.0),
+                          child: Center(
+                            child: CircularProgressIndicator(strokeWidth: 2),
                           ),
                         );
                       }
 
                       final msg = _messages[index];
-                      final isUser = msg.sender == 'user';
-
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 24.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              isUser ? "You:" : "AI:",
-                              style: TextStyle(
-                                fontFamily: 'Serif',
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                                color: isUser ? Colors.blueGrey.shade700 : Colors.deepPurple.shade700,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              msg.text,
-                              style: TextStyle(
-                                fontFamily: 'Serif',
-                                fontSize: 18,
-                                height: 1.5, // Matches line height roughly
-                                color: isUser ? Colors.black87 : const Color(0xFF424242),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
+                      return _buildMessageItem(msg);
                     },
                   ),
                 ),
@@ -172,9 +180,9 @@ class _AskAIScreenState extends State<AskAIScreen> {
                 Container(
                   padding: const EdgeInsets.all(16.0),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.9),
+                    color: Colors.white.withOpacity(0.95),
                     border: Border(
-                      top: BorderSide(color: Colors.grey.shade300),
+                      top: BorderSide(color: Colors.grey.shade200),
                     ),
                   ),
                   child: Row(
@@ -182,42 +190,168 @@ class _AskAIScreenState extends State<AskAIScreen> {
                       Expanded(
                         child: TextField(
                           controller: _queryController,
-                          style: const TextStyle(fontFamily: 'Serif', fontSize: 16),
+                          style: const TextStyle(fontSize: 16),
                           decoration: InputDecoration(
-                            hintText: 'Write your question here...',
+                            hintText: 'e.g., "What did I eat last week?"',
                             hintStyle: TextStyle(
-                              fontFamily: 'Serif',
-                              fontStyle: FontStyle.italic,
                               color: Colors.grey.shade400,
+                              fontStyle: FontStyle.italic,
                             ),
                             filled: true,
                             fillColor: Colors.grey.shade100,
                             border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(20),
+                              borderRadius: BorderRadius.circular(30),
                               borderSide: BorderSide.none,
                             ),
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 12,
+                            ),
                           ),
-                          minLines: 1,
-                          maxLines: 3,
+                          onSubmitted: (_) =>
+                              _askAI(), // Allow 'Enter' to submit
                         ),
                       ),
                       const SizedBox(width: 12),
-                      ElevatedButton(
+                      FloatingActionButton(
                         onPressed: _isLoading ? null : _askAI,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF2c5364), // Dark blue from home screen
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        backgroundColor: const Color(0xFF2c5364),
+                        mini: true,
+                        elevation: 2,
+                        child: const Icon(
+                          Icons.send,
+                          color: Colors.white,
+                          size: 20,
                         ),
-                        child: const Text('Ask'),
                       ),
                     ],
                   ),
                 ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageItem(_ChatMessage msg) {
+    final isUser = msg.sender == 'user';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24.0),
+      child: Column(
+        crossAxisAlignment: isUser
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
+        children: [
+          // Sender Name
+          Text(
+            isUser ? "You" : "Memory AI",
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+              color: isUser ? Colors.blueGrey : Colors.deepPurple,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 6),
+
+          // Message Bubble
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: isUser ? const Color(0xFFE3F2FD) : Colors.white,
+              borderRadius: BorderRadius.only(
+                topLeft: const Radius.circular(16),
+                topRight: const Radius.circular(16),
+                bottomLeft: isUser ? const Radius.circular(16) : Radius.zero,
+                bottomRight: isUser ? Radius.zero : const Radius.circular(16),
+              ),
+              boxShadow: [
+                if (!isUser)
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 5,
+                    offset: const Offset(0, 2),
+                  ),
+              ],
+              border: !isUser ? Border.all(color: Colors.grey.shade100) : null,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  msg.text,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    height: 1.5,
+                    color: Colors.black87,
+                  ),
+                ),
+
+                // SOURCES SECTION (RAG)
+                if (msg.sources != null && msg.sources!.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  const Divider(height: 1),
+                  const SizedBox(height: 8),
+                  const Text(
+                    "Found in memories:",
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // Render Sources using list.map shortcut
+                  ...msg.sources!.map(
+                    (source) => Container(
+                      margin: const EdgeInsets.only(bottom: 6),
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(
+                            Icons.history,
+                            size: 14,
+                            color: Colors.deepPurple,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  source.text,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  "${source.date} • ${source.tone}",
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: Colors.grey.shade600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -233,41 +367,14 @@ class DiaryPagePainter extends CustomPainter {
     final paint = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.fill;
-
-    // 1. White Background
     canvas.drawRect(Offset.zero & size, paint);
 
-    // 2. Soft Vertical Gradient
-    final gradient = LinearGradient(
-      begin: Alignment.topCenter,
-      end: Alignment.bottomCenter,
-      colors: [
-        Colors.white,
-        Colors.grey.shade50,
-        Colors.grey.shade100,
-      ],
-    );
-    final rect = Rect.fromLTWH(0, 0, size.width, size.height);
-    paint.shader = gradient.createShader(rect);
-    canvas.drawRect(rect, paint);
-    paint.shader = null;
-
-    // 3. Horizontal Lines
     final linePaint = Paint()
-      ..color = Colors.blueGrey.withOpacity(0.1)
+      ..color = Colors.blueGrey.withOpacity(0.05)
       ..strokeWidth = 1.0;
-
-    double lineHeight = 30.0;
-    // Start drawing lines from a bit lower to account for header, but cover entire scrollable area
-    for (double y = 60; y < size.height; y += lineHeight) {
+    for (double y = 40; y < size.height; y += 30.0) {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), linePaint);
     }
-
-    // 4. Vertical Margin Line
-    final marginPaint = Paint()
-      ..color = Colors.redAccent.withOpacity(0.15)
-      ..strokeWidth = 1.0;
-    canvas.drawLine(Offset(40, 0), Offset(40, size.height), marginPaint);
   }
 
   @override

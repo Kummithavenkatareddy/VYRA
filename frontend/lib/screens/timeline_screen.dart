@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../services/api_service.dart';
+import '../models/api_models.dart';
 
 class TimelineScreen extends StatefulWidget {
   const TimelineScreen({super.key});
@@ -9,33 +11,39 @@ class TimelineScreen extends StatefulWidget {
 }
 
 class _TimelineScreenState extends State<TimelineScreen> {
-  // Mock Data
-  final List<Map<String, String>> memories = [
-    {
-      "date": "October 26, 2023",
-      "text": "Walked through the old park today, the autumn leaves were golden and vibrant. It reminded me of..."
-    },
-    {
-      "date": "October 15, 2023",
-      "text": "Finally finished reading that book about the history of coffee. So fascinating how..."
-    },
-    {
-      "date": "September 30, 2023",
-      "text": "Celebrated Sarah's birthday at the new Italian place. The pasta was incredible, and..."
-    },
-  ];
+  final ApiService _apiService = ApiService();
+
+  late Future<List<TimelineResponse>> _memoriesFuture;
+  DateTime? _selectedDate;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMemories();
+  }
+
+  void _loadMemories() {
+    String? dateStr;
+    if (_selectedDate != null) {
+      dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate!);
+    }
+
+    setState(() {
+      _memoriesFuture = _apiService.getTimeline(date: dateStr);
+    });
+  }
 
   Future<void> _pickDate() async {
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: DateTime(2023, 10, 26), // Set to a date within mock range for demo
+      initialDate: _selectedDate ?? DateTime.now(),
       firstDate: DateTime(2020),
       lastDate: DateTime.now(),
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
             colorScheme: const ColorScheme.light(
-              primary: Color(0xFF2c5364), // Dark blue theme
+              primary: Color(0xFF2c5364),
               onPrimary: Colors.white,
               onSurface: Colors.black,
             ),
@@ -45,16 +53,21 @@ class _TimelineScreenState extends State<TimelineScreen> {
       },
     );
 
-    if (picked != null) {
-      if (!mounted) return;
-      // Simulate redirection/filtering
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Jumping to ${DateFormat('MMMM d, yyyy').format(picked)}..."),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF2c5364),
-        ),
-      );
+    if (picked == null) return;
+
+    setState(() {
+      _selectedDate = picked;
+      _loadMemories();
+    });
+  }
+
+  String _formatDisplayDate(String dateStr, String timeStr) {
+    try {
+      final date = DateTime.parse(dateStr);
+      final formattedDate = DateFormat('MMM d, yyyy').format(date);
+      return "$formattedDate • $timeStr";
+    } catch (e) {
+      return dateStr;
     }
   }
 
@@ -64,54 +77,108 @@ class _TimelineScreenState extends State<TimelineScreen> {
       backgroundColor: Colors.white,
       body: Stack(
         children: [
-          // 1. Background Lines
-          Positioned.fill(
-            child: CustomPaint(
-              painter: NotebookLinesPainter(),
-            ),
-          ),
-
-          // 2. Content
+          Positioned.fill(child: CustomPaint(painter: NotebookLinesPainter())),
           SafeArea(
             child: Column(
               children: [
-                // Header
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16.0,
+                    vertical: 12.0,
+                  ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.arrow_back, color: Colors.black87),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                      const Text(
-                        'Timeline',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w500,
+                        icon: const Icon(
+                          Icons.arrow_back,
                           color: Colors.black87,
                         ),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                      Column(
+                        children: [
+                          const Text(
+                            'Timeline',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          if (_selectedDate != null)
+                            GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _selectedDate = null;
+                                  _loadMemories();
+                                });
+                              },
+                              child: Text(
+                                "Clear Filter",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.blue.shade700,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                       IconButton(
-                        icon: const Icon(Icons.calendar_today_outlined, color: Colors.black87),
+                        icon: Icon(
+                          _selectedDate == null
+                              ? Icons.calendar_today_outlined
+                              : Icons.event_available,
+                          color: _selectedDate == null
+                              ? Colors.black87
+                              : Colors.blue.shade700,
+                        ),
                         onPressed: _pickDate,
                       ),
                     ],
                   ),
                 ),
-
-                // Timeline List
                 Expanded(
-                  child: ListView.builder(
-                    padding: const EdgeInsets.only(top: 10, bottom: 40),
-                    itemCount: memories.length,
-                    itemBuilder: (context, index) {
-                      final memory = memories[index];
-                      return TimelineItem(
-                        date: memory['date']!,
-                        text: memory['text']!,
-                        isLast: index == memories.length - 1,
+                  child: FutureBuilder<List<TimelineResponse>>(
+                    future: _memoriesFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      if (snapshot.hasError) {
+                        return Center(
+                          child: Text(
+                            "Error loading memories:\n${snapshot.error}",
+                            textAlign: TextAlign.center,
+                          ),
+                        );
+                      }
+                      if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                        return const Center(
+                          child: Text(
+                            "No memories found.\nTry recording one!",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.grey, fontSize: 16),
+                          ),
+                        );
+                      }
+
+                      final memories = snapshot.data!;
+
+                      return ListView.builder(
+                        padding: const EdgeInsets.only(top: 10, bottom: 40),
+                        itemCount: memories.length,
+                        itemBuilder: (context, index) {
+                          final memory = memories[index];
+                          return TimelineItem(
+                            dateDisplay: _formatDisplayDate(
+                              memory.date,
+                              memory.time,
+                            ),
+                            text: memory.text,
+                            tone: memory.tone,
+                            isLast: index == memories.length - 1,
+                          );
+                        },
                       );
                     },
                   ),
@@ -126,14 +193,16 @@ class _TimelineScreenState extends State<TimelineScreen> {
 }
 
 class TimelineItem extends StatelessWidget {
-  final String date;
+  final String dateDisplay;
   final String text;
+  final String tone;
   final bool isLast;
 
   const TimelineItem({
     super.key,
-    required this.date,
+    required this.dateDisplay,
     required this.text,
+    required this.tone,
     this.isLast = false,
   });
 
@@ -143,42 +212,31 @@ class TimelineItem extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Left Timeline Section
           SizedBox(
             width: 80,
             child: Stack(
               alignment: Alignment.topCenter,
               children: [
-                // Vertical Line
                 if (!isLast)
                   Positioned(
                     top: 40,
                     bottom: 0,
-                    child: Container(
-                      width: 2,
-                      color: Colors.grey.shade300,
-                    ),
+                    child: Container(width: 2, color: Colors.grey.shade300),
                   ),
-                // Top connection line
-                 Positioned(
-                    top: 0,
-                    bottom: 0,
-                    child: Container(
-                      width: 4,
-                      color: Colors.grey.shade300,
-                    ),
-                  ),
-                
-                // Dot
+                Positioned(
+                  top: 0,
+                  height: 40,
+                  child: Container(width: 4, color: Colors.grey.shade300),
+                ),
                 Positioned(
                   top: 40,
                   child: Container(
                     width: 20,
                     height: 20,
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: _getToneColor(tone),
                       shape: BoxShape.circle,
-                      border: Border.all(color: Colors.grey.shade300, width: 4),
+                      border: Border.all(color: Colors.white, width: 3),
                       boxShadow: [
                         BoxShadow(
                           color: Colors.black.withOpacity(0.1),
@@ -192,15 +250,13 @@ class TimelineItem extends StatelessWidget {
               ],
             ),
           ),
-
-          // Right Card Section
           Expanded(
             child: Padding(
               padding: const EdgeInsets.only(bottom: 24.0, right: 20.0),
               child: Container(
                 padding: const EdgeInsets.all(20.0),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFDFBF7), // Creamy white
+                  color: const Color(0xFFFDFBF7),
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: [
                     BoxShadow(
@@ -214,7 +270,7 @@ class TimelineItem extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      date,
+                      dateDisplay,
                       style: const TextStyle(
                         fontFamily: 'Serif',
                         fontStyle: FontStyle.italic,
@@ -240,6 +296,23 @@ class TimelineItem extends StatelessWidget {
       ),
     );
   }
+
+  Color _getToneColor(String tone) {
+    switch (tone.toLowerCase()) {
+      case 'happy':
+        return Colors.orangeAccent;
+      case 'sad':
+        return Colors.blueGrey;
+      case 'excited':
+        return Colors.pinkAccent;
+      case 'anxious':
+        return Colors.purpleAccent;
+      case 'confident':
+        return Colors.green;
+      default:
+        return Colors.blue;
+    }
+  }
 }
 
 class NotebookLinesPainter extends CustomPainter {
@@ -249,8 +322,7 @@ class NotebookLinesPainter extends CustomPainter {
       ..color = Colors.grey.shade200
       ..strokeWidth = 1.5;
 
-    double lineHeight = 32.0;
-    for (double y = 60; y < size.height; y += lineHeight) {
+    for (double y = 60; y < size.height; y += 32.0) {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
     }
   }

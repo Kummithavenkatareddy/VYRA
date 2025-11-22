@@ -1,79 +1,84 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
+import '../models/api_models.dart';
 
 class ApiService {
   // Use 10.0.2.2 for Android emulator to access localhost
-  static const String baseUrl = 'http://10.0.2.2:8000/api/v1';
-
-  Future<Map<String, dynamic>> uploadAudioMemory(String filePath) async {
-    // TODO: Implement file upload
-    // var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/memories/audio'));
-    // request.files.add(await http.MultipartFile.fromPath('file', filePath));
-    // var response = await request.send();
-    
-    // Mock response for now
-    await Future.delayed(const Duration(seconds: 1));
-    return {
-      "memory_id": "uuid-123",
-      "text": "I met Rahul at the cafe...",
-      "timestamp": DateTime.now().toIso8601String(),
-    };
+  String get baseUrl {
+    if (kIsWeb) return 'http://localhost:8000';
+    // Android Emulator uses 10.0.2.2 to access the host machine
+    if (Platform.isAndroid) return 'http://10.0.2.2:8000';
+    return 'http://localhost:8000'; // iOS / Desktop
   }
 
-  Future<Map<String, dynamic>> createTextMemory(String text) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/memories'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'text': text}),
-    );
+  Future<MemoryResponse> recordMemory(String text, String? tone) async {
+    // 2. Use the dynamic baseUrl
+    final url = Uri.parse('$baseUrl/memory/record');
 
-    if (response.statusCode == 200) {
-      return jsonDecode(response.body);
-    } else {
-      // Mock fallback
-      return {"memory_id": "uuid-mock"};
+    try {
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(MemoryCreate(text: text, tone: tone).toJson()),
+      );
+
+      if (response.statusCode == 200) {
+        return MemoryResponse.fromJson(jsonDecode(response.body));
+      } else {
+        throw Exception('Server error: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Connection failed: $e');
     }
   }
 
-  Future<List<dynamic>> getMemories() async {
-    // final response = await http.get(Uri.parse('$baseUrl/memories?user_id=XYZ'));
-    // if (response.statusCode == 200) {
-    //   return jsonDecode(response.body)['memories'];
-    // }
-    
-    // Mock response
-    await Future.delayed(const Duration(seconds: 1));
-    return [
-      {
-        "memory_id": "uuid-1",
-        "text": "I met Rahul...",
-        "timestamp": "2025-02-02T18:30:00Z"
-      },
-      {
-        "memory_id": "uuid-2",
-        "text": "Went to the park.",
-        "timestamp": "2025-02-03T10:00:00Z"
-      }
-    ];
+  Future<MemoryResponse> addTextMemory(String text, String? tone) async {
+    final url = Uri.parse('$baseUrl/memory/text');
+    final response = await http.post(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(MemoryCreate(text: text, tone: tone).toJson()),
+    );
+
+    if (response.statusCode == 200) {
+      return MemoryResponse.fromJson(jsonDecode(response.body));
+    } else {
+      throw Exception('Failed to add text memory: ');
+    }
   }
 
-  Future<Map<String, dynamic>> queryMemories(String query) async {
-    // final response = await http.post(
-    //   Uri.parse('$baseUrl/query'),
-    //   headers: {'Content-Type': 'application/json'},
-    //   body: jsonEncode({'query': query}),
-    // );
-    
-    // Mock response
-    await Future.delayed(const Duration(seconds: 1));
-    return {
-      "answer": "You felt happy and excited when you met Rahul at the cafe.",
-      "sources": [
-        {
-          "text": "I met Rahul...",
-          "timestamp": "2025-02-02T18:30:00Z"
-        }
-      ]
-    };
+  Future<List<TimelineResponse>> getTimeline({String? date}) async {
+    var uri = Uri.parse('$baseUrl/timeline');
+    if (date != null) {
+      uri = uri.replace(queryParameters: {'date': date});
+    }
+
+    final response = await http.get(uri);
+
+    if (response.statusCode == 200) {
+      List<dynamic> body = jsonDecode(response.body);
+      return body
+          .map((dynamic item) => TimelineResponse.fromJson(item))
+          .toList();
+    } else {
+      throw Exception('Failed to load timeline: ');
+    }
+  }
+
+  Future<QueryResponse> askAI(String query) async {
+    final url = Uri.parse('$baseUrl/ask');
+    final response = await http.post(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(QueryRequest(query: query).toJson()),
+    );
+
+    if (response.statusCode == 200) {
+      return QueryResponse.fromJson(jsonDecode(response.body));
+    } else {
+      throw Exception('Failed to ask AI: ');
+    }
   }
 }
